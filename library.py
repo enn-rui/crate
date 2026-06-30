@@ -686,8 +686,12 @@ def run_analysis(root: Path = None, python_exe: str | None = None, rebuild: bool
         cwd = str(ANALYSIS_DIR)
     if rebuild:
         cmd.append("--rebuild")
+    # Read the child's stdout as UTF-8 (errors="replace") and tell the child to emit UTF-8, so a track
+    # name with accents/Unicode can't raise UnicodeEncodeError on a Windows cp1252 console and kill the
+    # run. (text=True alone would decode with the GUI's locale codec and could choke on the same bytes.)
+    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True, bufsize=1, cwd=cwd,
+                            text=True, encoding="utf-8", errors="replace", bufsize=1, cwd=cwd, env=env,
                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     log: list[str] = []
     n = 0
@@ -750,7 +754,7 @@ def run_analysis_remote(rebuild: bool = False, progress=None, cfg: dict | None =
         remote += " --rebuild"
     cmd = ["ssh", dest, remote]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True, bufsize=1,
+                            text=True, encoding="utf-8", errors="replace", bufsize=1,
                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     log: list[str] = []
     n = 0

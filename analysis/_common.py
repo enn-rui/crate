@@ -11,7 +11,19 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
+
+# Every analysis step imports this module, so force UTF-8 console output HERE once. Otherwise, when the
+# pipeline runs as a frozen exe (or any Windows process whose stdout is a pipe), Python defaults to the
+# legacy cp1252 codec and a single print() of a track name with a non-Latin-1 character (accents, ö/ü/é,
+# combining marks, CJK, emoji) raises UnicodeEncodeError and kills the whole pass. errors="replace" keeps
+# it alive even on truly undecodable bytes.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 AUDIO_EXTS = {".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".aiff", ".aif"}
 

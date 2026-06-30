@@ -15,6 +15,11 @@ import sys
 
 
 def main() -> int:
+    for _stream in (sys.stdout, sys.stderr):           # UTF-8 output so a Unicode track name can't
+        try:                                            # crash the frozen pipeline on a cp1252 console
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     argv = sys.argv[1:]
     if argv and argv[0] == "--step":            # internal per-step dispatch (used by analyze_all)
         import importlib
