@@ -59,7 +59,7 @@ python -m venv .venv
 
 ### Verify the app tier
 ```powershell
-.venv\Scripts\python.exe -m pytest test_library.py -q      # expect: 46 passed
+.venv\Scripts\python.exe -m pytest test_library.py -q      # expect: 53 passed
 ```
 Then the window should open. **First-run flow inside the app:**
 1. Point it at the user's **music folder** when prompted (or set the `CRATE_LIB_ROOT` env var).
@@ -128,6 +128,43 @@ Only `ssh` is required; the rest default to the layout above.
 - **Split topology:** if the app and the music are on different machines, point the app's
   `CRATE_LIB_ROOT` (or in-app library root) at the same mounted library so it finds the `.crate/`
   sidecars the analysis machine wrote.
+
+### macOS / Apple Silicon (M-series) — read this if you're on a Mac
+
+The app tier is plain PySide6 and **just works** on macOS: `chmod +x run.sh && ./run.sh`. The only part
+that needs care is the **analysis tier**, because the MuQ stack (torch / torchaudio / nnAudio / numba) is
+newer than what's been verified on Apple Silicon. It almost certainly works — these are the knobs if it
+fights you:
+
+1. **Use Python 3.12 or 3.13, not 3.14, for the analysis venv.** `librosa` needs `numba`, and
+   `numba`/`llvmlite` wheels lag the newest Python — on macOS ARM, 3.12/3.13 have prebuilt wheels;
+   3.14 may try to build from source and fail. (The app tier is fine on any 3.11+.) If you only have
+   3.14, `brew install python@3.13` and make the analysis venv with that one.
+2. **Install torch the macOS way — NO `--index-url`.** On Apple Silicon the default PyPI wheels are the
+   right (arm64, MPS-capable) ones. The `download.pytorch.org/whl/cpu` index in the Windows steps above
+   is **Windows/Linux only** — don't use it on a Mac.
+   ```bash
+   python3.13 -m venv analysis/.venv
+   analysis/.venv/bin/pip install --upgrade pip
+   analysis/.venv/bin/pip install torch torchaudio          # default arm64 wheels
+   analysis/.venv/bin/pip install -r analysis/requirements-analysis.txt
+   brew install ffmpeg                                       # for m4a/AAC decoding
+   analysis/.venv/bin/python analysis/analyze_all.py --root "$HOME/Music/<your library>"
+   ```
+3. **MuQ runs on CPU here — that's fine.** It auto-uses CUDA only on NVIDIA; on a Mac it embeds on CPU
+   at ~2 s/track (a ~1000-track library is a one-time ~30–40 min pass). The model downloads from
+   Hugging Face on the first run (needs network once, then cached).
+4. **If a MuQ dep simply won't install, you lose nothing essential.** The whole app — browse, crates,
+   tags/cues, rekordbox export — works without the analysis tier; only the map / colored waveforms /
+   COMPATIBLE mixing stay empty. Ship the app, get analysis working separately. (If `nnAudio` or
+   `x_clip` choke, retry after the Python-version fix in (1) — that resolves the usual culprit.)
+
+**A standalone `.app` (optional):** the same `crate.spec` builds on a Mac
+(`analysis/.venv/bin/pip install "PySide6>=6.11" mutagen pyinstaller` then
+`analysis/.venv/bin/pyinstaller crate.spec --noconfirm --clean`) and produces a `dist/Crate/` folder with
+runnable `Crate` + `crate-analyze` binaries. For a double-clickable `.app` bundle you'd add a `BUNDLE()`
+block to the spec (not yet set up) — but **for a Mac, just running from source via `run.sh` is the easy,
+recommended path.** No build needed to use it.
 
 ---
 
