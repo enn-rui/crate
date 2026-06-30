@@ -1,0 +1,37 @@
+# Crate local analysis deps — for running analysis/analyze_all.py (BPM/key/energy + the MuQ-MuLan
+# audio-embedding map + sonic clusters + colored waveforms). This is HEAVY (pulls torch + a music
+# embedding model); install it in a SEPARATE venv from the app's.
+#
+# Proven end-to-end on Windows 11 + Python 3.14 (CPU torch), 2026-06. Runs fine with NO GPU:
+# MuQ-MuLan embeds at ~2s/track on CPU, so a ~1000-track library indexes one-time in ~30-40 min.
+# A GPU just makes it minutes instead.
+#
+# torch is intentionally NOT pinned here — install the build for your machine FIRST, then this file:
+#   * No GPU / macOS / any laptop:   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   * NVIDIA GPU: get the CUDA wheel matching your card from https://pytorch.org/get-started/
+#       - recent cards incl. RTX 40/50-series (Blackwell) need CUDA 12.8:
+#         pip install torch --index-url https://download.pytorch.org/whl/cu128
+# (Embedding auto-uses CUDA when torch.cuda is available; otherwise CPU.)
+
+# --- core embedding + features ---
+muq==0.1.0              # OpenMuQ/MuQ-MuLan-large, the 512-d music embedding model (embed_muq.py)
+transformers==5.12.1    # MuQ's text/audio backbone loader (also used by the legacy embed_clap.py)
+librosa==0.11.0
+soundfile==0.14.0
+numpy==2.4.6
+scipy==1.18.0
+pyloudnorm==0.1.1       # integrated LUFS loudness in analyze.py (pure-python, light)
+
+# --- map + clustering ---
+scikit-learn==1.9.0
+umap-learn==0.5.12      # umap_music/umap_artists projection + the 10-D pre-reduce for clustering
+hdbscan==0.8.44         # full-d sonic clusters in cluster.py (UMAP->10D->HDBSCAN)
+pacmap==0.9.1           # 2D+3D track map projection (umap_music.py) — better global structure
+
+# NOTE: `muq` pulls its own subdeps (x_clip, nnAudio, einops, torchaudio, etc.) automatically.
+#
+# OPTIONAL hi-level features (analyze_hi.py: genre / valence / danceability / downbeats / structure).
+# HEAVY + version-fragile (Linux wheels; pin numpy<2 in a SEPARATE venv). Install only to run that
+# script; the core pipeline above does not need them:
+#   essentia-tensorflow   (MusiCNN/EffNet models — genre, mood/valence, danceability, instrumentalness)
+#   madmom                (RNN downbeat tracking + structural segmentation)

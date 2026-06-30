@@ -1,0 +1,38 @@
+# Local caches / databases / build artifacts — never shipped
+.venv/
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+# but the distribution build recipe IS tracked:
+!crate.spec
+
+# Local index + per-machine config (each machine builds its own)
+crate.db
+crate_config.json
+artist_buckets_seed.json
+
+# Local sidecar snapshots (copied from the analysis machine at runtime)
+*_snapshot.sqlite
+
+# Generated theme asset
+assets/scanline.png
+
+# Internal dev log — kept locally, not shipped to the friend's copy
+HANDOFF.md
+
+# Audit report + delegation logs — internal only (the audit text quotes private findings)
+AUDIT_CODEX.md
+codex-*.log
+codex-build.log
+
+# Per-library artist map + local scratch helpers (regenerated per machine)
+artist_map.json
+_*.py
+# but _common.py is a REQUIRED shared analysis module, not a scratch helper:
+!analysis/_common.py
+
+# Personal box automation (Lidarr/Soulseek inbox filer) — runs on the user's server, not part of
+# the public app. Lives on the box as ~/crate/sort_incoming.py; this copy is private-only.
+analysis/sort_incoming.py

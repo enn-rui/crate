@@ -1,0 +1,178 @@
+/* @name     Winamp Classic
+   @font     Tahoma, Arial, Segoe UI, sans-serif
+   @scanline off
+   ----------------------------------------------------------------------------
+   Late-90s Winamp 2.x: brushed-charcoal chrome with chunky beveled (outset/inset)
+   buttons, a green LCD readout, a black playlist with green track text, and the
+   classic pale-yellow Win95 tooltip. (Skin format docs live in skins/terminal.qss.) */
+
+QWidget {
+    background: transparent;
+    color: #cdd2cf;
+    font-family: "__FONT__";
+    font-size: 11px;
+    selection-background-color: #0a3a8a;
+    selection-color: #ffffff;
+}
+
+QMainWindow { background-color: #1b1c1e; }
+#root { background-color: #1b1c1e; }
+
+/* --- top bar: brushed metal strip --- */
+#topbar {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3a3c40, stop:1 #232427);
+    border-bottom: 2px solid #101012;
+}
+#title { font-size: 15px; font-weight: bold; color: #25e35a; letter-spacing: 2px; }   /* green LCD */
+#modeChip {
+    color: #25e35a;
+    border: 2px inset #4a4c50;
+    background: #0a0c0a;
+    padding: 2px 7px;
+}
+#readout { color: #8a9a8e; }
+
+/* --- now-playing = bright green LCD; inspect = dim amber --- */
+#nowLabel { color: #25e35a; font-weight: bold; }
+#inspectLabel { color: #b9923f; }
+
+#panelHeader { color: #6f8a74; font-size: 11px; }
+
+/* --- sunken black input fields with green text --- */
+QLineEdit, QComboBox {
+    background: #0a0c0a;
+    border: 2px inset #4a4c50;
+    padding: 5px 8px;
+    color: #25e35a;
+}
+QLineEdit:focus, QComboBox:focus { border: 2px inset #2a7d32; }
+QComboBox::drop-down { border: 0; width: 16px; }
+QComboBox::down-arrow { width: 0; height: 0; }
+QComboBox QAbstractItemView {
+    background: #0a0c0a;
+    border: 2px outset #5e6064;
+    selection-background-color: #0a3a8a;
+    color: #25e35a;
+    outline: 0;
+}
+
+/* --- chunky beveled buttons (the Winamp signature) --- */
+QPushButton {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4c4e52, stop:1 #343639);
+    border: 2px outset #6a6c70;
+    padding: 6px 12px;
+    color: #eceee9;
+}
+QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #585a5e, stop:1 #3e4043); }
+QPushButton:pressed { border: 2px inset #6a6c70; background: #2c2e31; }
+QPushButton:disabled { color: #6a6c66; border: 2px outset #3a3c3e; }
+
+/* primary = green LCD bevel */
+#exportBtn {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #2f8f3a, stop:1 #1f6e2a);
+    border: 2px outset #43c452;
+    color: #eafff0;
+    padding: 8px 12px;
+}
+#exportBtn:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #37a945, stop:1 #258133); }
+
+/* destructive = red bevel */
+#deleteBtn {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #9a3535, stop:1 #6e2020);
+    border: 2px outset #c45a5a; color: #ffe6e6;
+}
+#deleteBtn:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #b34040, stop:1 #832626); }
+
+#harmonicBtn { border: 2px outset #5a7ac4; color: #cfe0ff; }
+#harmonicBtn:hover { background: #2c3550; }
+
+#playBtn { padding: 5px 0; font-size: 14px; color: #25e35a; }
+
+/* --- tag inspector --- */
+#tagDrawer { border-top: 2px solid #101012; background: #232427; }
+#drawerHeader {
+    text-align: left; padding: 4px 8px;
+    border: 2px outset #5a5c60;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3a3c40, stop:1 #2a2c2f);
+    color: #25e35a; letter-spacing: 0;
+}
+#drawerHeader:hover { background: #44464a; }
+#chip {
+    border: 2px outset #5a5c60;
+    background: #2c2e31;
+    color: #a8b0aa;
+    padding: 1px 9px;
+}
+#chip:hover { border: 2px outset #43c452; }
+#chip:checked { background: #1f6e2a; border: 2px inset #43c452; color: #eafff0; }
+
+/* --- LIST/MAP toggle --- */
+#modeBtn { padding: 6px 14px; border: 2px outset #6a6c70; }
+#modeBtn:checked { background: #1f6e2a; border: 2px inset #43c452; color: #eafff0; }
+
+/* --- dialogs --- */
+#card { background: #232427; border: 2px outset #5e6064; }
+#cardTitle { color: #25e35a; font-size: 14px; font-weight: bold; }
+
+/* --- transport --- */
+#transport {
+    border-top: 2px solid #101012;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #2c2e31, stop:1 #232427);
+}
+QSlider::groove:horizontal { height: 4px; background: #0a0c0a; border: 1px inset #3a3c3e; }
+QSlider::sub-page:horizontal { background: #25e35a; }
+QSlider::handle:horizontal {
+    width: 11px; height: 13px; margin: -6px 0;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #5c5e62, stop:1 #3a3c3f);
+    border: 2px outset #6a6c70;
+}
+
+/* --- playlist table: black w/ green text --- */
+QTableView {
+    background: #0a0c0a;
+    alternate-background-color: #121412;
+    border: 2px inset #4a4c50;
+    gridline-color: #16301a;
+    color: #25e35a;
+    outline: 0;
+}
+QTableView::item { padding: 2px 6px; border: 0; }
+QTableView::item:selected { background: #0a3a8a; color: #ffffff; }
+QHeaderView::section {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4c4e52, stop:1 #343639);
+    color: #dfe2dc;
+    border: 2px outset #6a6c70;
+    padding: 5px 6px;
+}
+QTableCornerButton::section { background: #343639; border: 2px outset #6a6c70; }
+
+/* --- crate list --- */
+QListWidget {
+    background: #0a0c0a;
+    border: 2px inset #4a4c50;
+    color: #25e35a;
+    outline: 0;
+}
+QListWidget::item { padding: 5px 7px; border-bottom: 1px solid #16301a; }
+QListWidget::item:selected { background: #0a3a8a; color: #ffffff; }
+
+/* --- status bar --- */
+QStatusBar { color: #8a9a8e; border-top: 2px solid #101012; background: #232427; }
+QStatusBar::item { border: 0; }
+
+/* --- scrollbars: beveled grey --- */
+QScrollBar:vertical { background: #1b1c1e; width: 14px; margin: 0; }
+QScrollBar::handle:vertical { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4c4e52, stop:1 #343639); border: 2px outset #6a6c70; min-height: 24px; }
+QScrollBar:horizontal { background: #1b1c1e; height: 14px; margin: 0; }
+QScrollBar::handle:horizontal { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4c4e52, stop:1 #343639); border: 2px outset #6a6c70; min-width: 24px; }
+QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; background: transparent; }
+QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+
+/* --- splitter / dialogs / classic yellow tooltip --- */
+QSplitter::handle { background: #101012; }
+QSplitter::handle:horizontal { width: 2px; }
+QMessageBox, QFileDialog { background: #232427; }
+QToolTip {
+    background: #ffffe1; color: #000000;
+    border: 1px solid #000000; padding: 3px 5px;
+}

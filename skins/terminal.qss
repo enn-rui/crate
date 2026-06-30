@@ -1,0 +1,205 @@
+/* @name     Terminal
+   @font     IBM Plex Mono, Cascadia Mono, Consolas, DejaVu Sans Mono, monospace
+   @scanline on
+   ----------------------------------------------------------------------------
+   Crate skin format: this header is read by theme.py. Tokens substituted at load:
+     __FONT__      -> first @font family installed on the machine
+     __SCANLINE__  -> path to the generated scanline tile (only if @scanline on)
+     __ASSETS__    -> absolute posix path to the skins/ folder (for url(...) images)
+   Copy this file to skins/<yourname>.qss and restyle freely to make a new skin.
+   ----------------------------------------------------------------------------
+   Terminal/brutalist theme from the CON//FLUENT design language: near-black ground,
+   off-white mono text, 1px translucent borders, faint scanline, cold-blue glow. */
+
+QWidget {
+    background: transparent;
+    color: #f4f7fb;
+    font-family: "__FONT__";
+    font-size: 12px;
+    selection-background-color: rgba(92, 112, 145, 60%);
+    selection-color: #f4f7fb;
+}
+
+QMainWindow { background-color: #05060a; }
+
+#root {
+    background-color: #05060a;
+    background-image: url(__SCANLINE__);
+    background-repeat: repeat;
+}
+
+/* --- top bar --- */
+#topbar { border-bottom: 1px solid rgba(244, 247, 251, 40%); }
+#title { font-size: 17px; font-weight: bold; color: #f4f7fb; letter-spacing: 2px; }
+#modeChip {
+    color: rgba(244, 247, 251, 66%);
+    border: 1px solid rgba(244, 247, 251, 32%);
+    background: rgba(244, 247, 251, 4%);
+    padding: 2px 7px;
+}
+#readout { color: rgba(244, 247, 251, 50%); }
+
+/* --- bottom-bar readouts: NOW (playing, prominent) vs INSPECT (looking at, dim) --- */
+#nowLabel { color: rgba(180, 210, 255, 92%); font-weight: bold; }
+#inspectLabel { color: rgba(244, 247, 251, 46%); }
+
+/* --- ascii panel headers --- */
+#panelHeader { color: rgba(244, 247, 251, 48%); font-size: 11px; }
+
+/* --- text fields / combos --- */
+QLineEdit, QComboBox {
+    background: rgba(244, 247, 251, 5%);
+    border: 1px solid rgba(244, 247, 251, 28%);
+    padding: 6px 9px;
+    color: #f4f7fb;
+}
+QLineEdit:focus, QComboBox:focus { border: 1px solid rgba(244, 247, 251, 72%); }
+QComboBox::drop-down { border: 0; width: 18px; }
+QComboBox::down-arrow { width: 0; height: 0; }
+QComboBox QAbstractItemView {
+    background: #0a0c12;
+    border: 1px solid rgba(244, 247, 251, 40%);
+    selection-background-color: rgba(92, 112, 145, 60%);
+    color: #f4f7fb;
+    outline: 0;
+}
+
+/* --- buttons --- */
+QPushButton {
+    background: rgba(244, 247, 251, 6%);
+    border: 1px solid rgba(244, 247, 251, 45%);
+    padding: 7px 12px;
+    color: rgba(244, 247, 251, 88%);
+}
+QPushButton:hover {
+    background: rgba(244, 247, 251, 12%);
+    border: 1px solid rgba(244, 247, 251, 78%);
+    color: #f4f7fb;
+}
+QPushButton:pressed { background: rgba(244, 247, 251, 18%); }
+QPushButton:disabled { color: rgba(244, 247, 251, 28%); border-color: rgba(244, 247, 251, 16%); }
+
+/* primary action — cold-blue glow accent */
+#exportBtn {
+    background: rgba(180, 210, 255, 10%);
+    border: 1px solid rgba(180, 210, 255, 55%);
+    color: #f4f7fb;
+    padding: 9px 12px;
+}
+#exportBtn:hover { background: rgba(180, 210, 255, 20%); border: 1px solid rgba(180, 210, 255, 90%); }
+
+/* destructive action — warm/red accent so it can't be mistaken for ADD */
+#deleteBtn { border: 1px solid rgba(255, 120, 120, 45%); color: rgba(255, 190, 190, 90%); }
+#deleteBtn:hover { background: rgba(255, 120, 120, 14%); border: 1px solid rgba(255, 120, 120, 82%); }
+
+#harmonicBtn { border: 1px solid rgba(180, 210, 255, 50%); color: rgba(210, 228, 255, 92%); }
+#harmonicBtn:hover { background: rgba(180, 210, 255, 12%); border: 1px solid rgba(180, 210, 255, 80%); }
+
+#playBtn { padding: 6px 0; font-size: 14px; }
+
+/* --- tag inspector (bottom drawer) --- */
+#tagDrawer { border-top: 1px solid rgba(244, 247, 251, 14%); }
+#drawerHeader {
+    text-align: left;
+    padding: 4px 8px;
+    border: 0;
+    border-bottom: 1px solid rgba(244, 247, 251, 12%);
+    background: rgba(180, 210, 255, 6%);
+    color: rgba(210, 228, 255, 80%);
+    letter-spacing: 0;
+}
+#drawerHeader:hover { background: rgba(180, 210, 255, 12%); }
+#chip {
+    border: 1px solid rgba(244, 247, 251, 22%);
+    background: transparent;
+    color: rgba(244, 247, 251, 45%);     /* available-to-add tag (not on this track) */
+    padding: 1px 9px;
+}
+#chip:hover { border-color: rgba(180, 210, 255, 55%); }
+#chip:checked {                           /* active: this track HAS this tag */
+    background: rgba(180, 210, 255, 20%);
+    border: 1px solid rgba(180, 210, 255, 85%);
+    color: #eaf2ff;
+}
+
+/* --- LIST/MAP mode toggle --- */
+#modeBtn { padding: 6px 14px; border: 1px solid rgba(244, 247, 251, 30%); }
+#modeBtn:checked {
+    background: rgba(180, 210, 255, 16%);
+    border: 1px solid rgba(180, 210, 255, 85%);
+    color: #f4f7fb;
+}
+
+/* --- saved-crate / settings dialog surfaces --- */
+#card {
+    background: #0a0c12;
+    border: 1px solid rgba(180, 210, 255, 55%);
+}
+#cardTitle {
+    color: #f4f7fb;
+    font-size: 15px;
+    font-weight: bold;
+}
+
+/* --- preview transport --- */
+#transport { border-top: 1px solid rgba(244, 247, 251, 22%); }
+QSlider::groove:horizontal { height: 3px; background: rgba(244, 247, 251, 18%); }
+QSlider::sub-page:horizontal { background: rgba(180, 210, 255, 50%); }
+QSlider::handle:horizontal {
+    width: 10px; height: 10px; margin: -4px 0;
+    background: rgba(180, 210, 255, 85%); border: 0;
+}
+
+/* --- results table --- */
+QTableView {
+    background: rgba(5, 6, 10, 35%);
+    alternate-background-color: rgba(244, 247, 251, 3%);
+    border: 1px solid rgba(244, 247, 251, 22%);
+    gridline-color: rgba(244, 247, 251, 9%);
+    color: rgba(244, 247, 251, 88%);
+    outline: 0;
+}
+QTableView::item { padding: 3px 6px; border: 0; }
+QTableView::item:selected { background: rgba(92, 112, 145, 55%); color: #f4f7fb; }
+QHeaderView::section {
+    background: #0a0c12;
+    color: rgba(244, 247, 251, 55%);
+    border: 0;
+    border-bottom: 1px solid rgba(244, 247, 251, 35%);
+    border-right: 1px solid rgba(244, 247, 251, 8%);
+    padding: 6px 6px;
+}
+QTableCornerButton::section { background: #0a0c12; border: 0; }
+
+/* --- crate list --- */
+QListWidget {
+    background: rgba(5, 6, 10, 45%);
+    border: 1px solid rgba(244, 247, 251, 28%);
+    color: rgba(244, 247, 251, 85%);
+    outline: 0;
+}
+QListWidget::item { padding: 5px 7px; border-bottom: 1px solid rgba(244, 247, 251, 7%); }
+QListWidget::item:selected { background: rgba(92, 112, 145, 55%); color: #f4f7fb; }
+
+/* --- status bar --- */
+QStatusBar { color: rgba(244, 247, 251, 60%); border-top: 1px solid rgba(244, 247, 251, 22%); }
+QStatusBar::item { border: 0; }
+
+/* --- scrollbars (slim, terminal) --- */
+QScrollBar:vertical { background: transparent; width: 10px; margin: 0; }
+QScrollBar::handle:vertical { background: rgba(244, 247, 251, 22%); min-height: 24px; }
+QScrollBar::handle:vertical:hover { background: rgba(244, 247, 251, 42%); }
+QScrollBar:horizontal { background: transparent; height: 10px; margin: 0; }
+QScrollBar::handle:horizontal { background: rgba(244, 247, 251, 22%); min-width: 24px; }
+QScrollBar::handle:horizontal:hover { background: rgba(244, 247, 251, 42%); }
+QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; background: transparent; }
+QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+
+/* --- splitter / dialogs / tooltips --- */
+QSplitter::handle { background: rgba(244, 247, 251, 10%); }
+QSplitter::handle:horizontal { width: 2px; }
+QMessageBox, QFileDialog { background: #05060a; }
+QToolTip {
+    background: #0a0c12; color: #f4f7fb;
+    border: 1px solid rgba(244, 247, 251, 40%); padding: 4px 6px;
+}
