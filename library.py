@@ -7,7 +7,7 @@ also be driven from the CLI (`python library.py index|search|export ...`).
 The library root is configurable (in-app ⚙ FOLDERS / first-run / CRATE_LIB_ROOT env); it may
 be a local folder or a network mount. Scan roots ("buckets") are user-defined folders under it.
 Tracks filed as <Artist>\<Title>.<ext> fall back to the path for artist/title when tags are
-missing. Audio analysis (BPM/key/energy + CLAP/UMAP + waveforms) is computed separately by the
+missing. Audio analysis (BPM/key/energy + MuQ-MuLan embeddings + map + waveforms) is computed separately by the
 `analysis/` pipeline, which writes SQLite sidecars to <lib_root>/.crate/ that this module reads.
 """
 from __future__ import annotations
@@ -83,7 +83,7 @@ QUARANTINE = LIB_ROOT / ".crate" / "trash"
 UMAP_PATH = LIB_ROOT / ".crate" / "umap.sqlite"
 # ARTIST-level UMAP (umap_artists.py): each artist = mean of their tracks' vectors -> 2D
 ARTIST_UMAP_PATH = LIB_ROOT / ".crate" / "artist_umap.sqlite"
-# full 512-d CLAP vectors (embed_clap.py). The UMAP above is display-only; SIMILARITY/MIXABILITY
+# full 512-d sonic vectors (MuQ-MuLan, embed_muq.py). The map above is display-only; SIMILARITY/MIXABILITY
 # math runs on these full vectors (cosine), which is why the PC reads them directly.
 VECTORS_PATH = LIB_ROOT / ".crate" / "music_vectors.sqlite"
 # full-d HDBSCAN cluster labels from the box analysis; -1 means noise / unclustered
@@ -210,7 +210,21 @@ def connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
     and re-running all the migrations on every one was pure overhead."""
     con = sqlite3.connect(str(db_path))
     con.row_factory = sqlite3.Row
+    # Per-connection pragmas (busy_timeout + synchronous are NOT persisted in the db file, unlike
+    # journal_mode, so they must be set on every connection): the auto-saving tag/cue UI writes many
+    # small transactions while a background worker may be indexing; WAL lets a read proceed during a
+    # write, busy_timeout avoids an instant "database is locked" on concurrent access, and NORMAL sync
+    # is safe under WAL and far cheaper than the default FULL fsync per commit.
+    try:
+        con.execute("PRAGMA busy_timeout=5000")
+        con.execute("PRAGMA synchronous=NORMAL")
+    except Exception:
+        pass
     if str(db_path) not in _SCHEMA_READY:
+        try:
+            con.execute("PRAGMA journal_mode=WAL")   # persisted in the db file; set once is enough
+        except Exception:
+            pass
         _ensure_schema(con)
         _SCHEMA_READY.add(str(db_path))
     return con
@@ -236,6 +250,11 @@ def _ensure_schema(con: sqlite3.Connection) -> None:
     )
     con.execute("CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_tracks_title  ON tracks(title)")
+    # search() / list_buckets() / harmonic_matches() filter or DISTINCT on these — index them so the
+    # queries don't full-scan the tracks table as the library grows.
+    con.execute("CREATE INDEX IF NOT EXISTS idx_tracks_bucket ON tracks(bucket)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_tracks_key    ON tracks(key)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_tracks_bpm    ON tracks(bpm)")
     # migrations: feature columns added by the box analysis (Phase 2)
     cols = {r[1] for r in con.execute("PRAGMA table_info(tracks)")}
     for col, decl in (("energy", "REAL"), ("centroid", "REAL"), ("mfcc", "TEXT"),
@@ -356,10 +375,6 @@ def iter_audio_sources(sources):
         for p in root.rglob("*"):
             if p.is_file() and p.suffix.lower() in AUDIO_EXTS:
                 yield label, p
-
-
-def iter_audio(root: Path, buckets=BUCKETS):
-    yield from iter_audio_sources([(lbl, Path(root) / rel) for lbl, rel in buckets])
 
 
 def index(root: Path = LIB_ROOT, db_path: Path = DB_PATH, buckets=BUCKETS,
@@ -661,7 +676,7 @@ def analysis_python_path() -> Path | None:
 def run_analysis(root: Path = None, python_exe: str | None = None, rebuild: bool = False,
                  progress=None) -> dict:
     """Run Crate's full local analysis pipeline (analysis/analyze_all.py) against `root`, in-app —
-    BPM/key/energy -> CLAP embeddings -> UMAP map -> waveforms, all written to <root>/.crate/ where
+    BPM/key/energy -> MuQ-MuLan embeddings -> map -> waveforms, all written to <root>/.crate/ where
     the app reads them. Streams step headers via progress(n, label). Returns
     {ok, code, root, log}. Raises RuntimeError if no analysis interpreter is available.
 
@@ -1048,8 +1063,8 @@ def harmonic_matches(seed: Track, db_path: Path = DB_PATH,
     """Owned tracks that mix well with `seed`: harmonically-compatible key AND BPM within
     ±bpm_tol (also accepting half/double-time). The key+BPM gate is the hard constraint; within
     it, ranking is sonic-aware — candidates are ordered by the fused `mixability` score (key +
-    tempo + CLAP vibe), so harmonically-equal tracks that actually *sound* alike rank first.
-    Falls back to key-rank/BPM-distance order when no CLAP vectors are present."""
+    tempo + sonic vibe), so harmonically-equal tracks that actually *sound* alike rank first.
+    Falls back to key-rank/BPM-distance order when no sonic vectors are present."""
     if not seed.key or not seed.bpm:
         return []
     neigh = camelot_neighbors(seed.key)
@@ -1072,7 +1087,7 @@ def harmonic_matches(seed: Track, db_path: Path = DB_PATH,
                 best = d
         return best
 
-    vecs = load_vectors()           # cached snapshot of the full 512-d CLAP vectors (may be empty)
+    vecs = load_vectors()           # cached snapshot of the full 512-d sonic vectors (may be empty)
     secs = load_section_vectors()   # cached intro/outro vectors for transition flow (may be empty)
     scored = []
     for r in rows:
@@ -1087,9 +1102,9 @@ def harmonic_matches(seed: Track, db_path: Path = DB_PATH,
     return [t for _, _, _, t in scored[:limit]]
 
 
-# --- CLAP similarity + mixability (full 512-d vectors) ----------------------
-# The MAP/UMAP is a 2D *display* projection; recommendation math must run on the full vectors.
-# We snapshot music_vectors.sqlite (written by embed_clap.py) once, normalize, and cache an
+# --- Sonic similarity + mixability (full 512-d vectors) ---------------------
+# The MAP is a 2D *display* projection; recommendation math must run on the full vectors.
+# We snapshot music_vectors.sqlite (written by embed_muq.py) once, normalize, and cache an
 # {local_path: vec} dict + a stacked matrix for fast cosine. Cheap (~613x512 floats).
 _VEC_CACHE: dict | None = None         # {local_path(str): np.ndarray(float32, L2-normed)}
 _VEC_MTIME: float | None = None        # source mtime the cache was built from
@@ -1134,8 +1149,8 @@ def load_vectors(vectors_path: Path = None, lib_root: Path = None, force: bool =
         vcon = sqlite3.connect(f"file:{tmp}?mode=ro", uri=True)
         rows = vcon.execute("SELECT relpath, vec FROM vectors").fetchall()
         # MEAN-CENTER at read time with the SAME dataset-mean the box UMAP was built with (persisted
-        # in the vector_stats table by embed_clap.py / vectors.recompute_and_store). Raw CLAP vectors
-        # are anisotropic (~0.99 cosine between everything) so un-centered similarity is noise; this
+        # in the vector_stats table by embed_muq.py / vectors.recompute_and_store). Raw sonic vectors
+        # can be anisotropic (high cosine between everything) so un-centered similarity is noise; this
         # keeps similar_tracks / mixability in step with the map. Absent (old sidecar) -> raw, as before.
         try:
             mr = vcon.execute("SELECT v FROM vector_stats WHERE k='mean'").fetchone()
@@ -1199,9 +1214,9 @@ def load_clusters(clusters_path: Path = None, lib_root: Path = None, force: bool
         return _CLU_CACHE or {}
 
 
-def clap_similarity(path_a: str, path_b: str, vectors: dict | None = None) -> float | None:
-    """Cosine similarity (0..1, clamped) between two tracks' CLAP vectors, or None if either is
-    un-embedded. Vectors are unit-normalized so cosine = dot."""
+def sonic_similarity(path_a: str, path_b: str, vectors: dict | None = None) -> float | None:
+    """Cosine similarity (0..1, clamped) between two tracks' sonic (MuQ-MuLan) vectors, or None if
+    either is un-embedded. Vectors are unit-normalized so cosine = dot."""
     import numpy as np
     vecs = vectors if vectors is not None else load_vectors()
     a, b = vecs.get(path_a), vecs.get(path_b)
@@ -1212,11 +1227,11 @@ def clap_similarity(path_a: str, path_b: str, vectors: dict | None = None) -> fl
 
 def load_section_vectors(vectors_path: Path = None, lib_root: Path = None, force: bool = False) -> dict:
     """Return {local_path: (intro_unit, outro_unit)} from music_vectors.sqlite, cached. These are the
-    per-end CLAP windows (vec_intro near the start, vec_outro near the end) used for TRANSITION
+    per-end sonic windows (vec_intro near the start, vec_outro near the end) used for TRANSITION
     matching: a track's OUTRO vs a candidate's INTRO says how the *mix point* flows, not just whether
     the two tracks sound alike overall. Mean-centered + unit-normed with the same dataset-mean as the
     whole-track vectors (so cosine is meaningful). Empty if the sidecar lacks the section columns
-    (older embed_clap.py) or isn't present yet."""
+    (older analysis runs) or isn't present yet."""
     global _SEC_CACHE, _SEC_MTIME
     vectors_path = Path(vectors_path) if vectors_path else VECTORS_PATH
     lib_root = Path(lib_root) if lib_root else LIB_ROOT
@@ -1283,7 +1298,7 @@ def transition_score(path_a: str, path_b: str, sections: dict | None = None) -> 
 
 def similar_tracks(seed: Track, n: int = 50, db_path: Path = DB_PATH,
                    vectors_path: Path = None, lib_root: Path = None) -> list[tuple[Track, float]]:
-    """Tracks most sonically similar to `seed` by full-512-d CLAP cosine (vibe/timbre), best-first.
+    """Tracks most sonically similar to `seed` by full-512-d sonic cosine (vibe/timbre), best-first.
     Returns [(Track, similarity 0..1)]. Empty if the seed isn't embedded or no vectors exist."""
     import numpy as np
     vecs = load_vectors(vectors_path, lib_root)
@@ -1343,7 +1358,7 @@ def mixability(a: Track, b: Track, vectors: dict | None = None, sections: dict |
     transition):
       • key        — Camelot harmonic compatibility (a hard mixing constraint)
       • tempo      — BPM proximity, accepting half/double-time (the other hard constraint)
-      • sound      — whole-track CLAP cosine: do they share a vibe/timbre
+      • sound      — whole-track sonic cosine: do they share a vibe/timbre
       • transition — A's OUTRO vs B's INTRO: does the mix POINT actually flow (directional)
     Any factor whose data is missing (un-embedded track, no section vectors, old sidecar) is dropped
     and its weight redistributed over the rest, so the score stays a clean 0..1 either way. Note the
@@ -1352,11 +1367,11 @@ def mixability(a: Track, b: Track, vectors: dict | None = None, sections: dict |
     wk, wb, wc, wt = weights
     key_s = _key_score(a.key, b.key)
     bpm_s = _bpm_score(a.bpm, b.bpm)
-    clap_s = clap_similarity(a.path, b.path, vectors)
+    sonic_s = sonic_similarity(a.path, b.path, vectors)
     trans_s = transition_score(a.path, b.path, sections)
     terms = [(wk, key_s), (wb, bpm_s)]
-    if clap_s is not None:
-        terms.append((wc, clap_s))
+    if sonic_s is not None:
+        terms.append((wc, sonic_s))
     if trans_s is not None:
         terms.append((wt, trans_s))
     tot = sum(w for w, _ in terms)
@@ -1412,28 +1427,61 @@ def build_path(seed: Track, length: int = 12, db_path: Path = DB_PATH,
     return chosen
 
 
+_SNAP_CACHE: dict[str, dict] = {}   # tag -> {"mtime": float} for mtime-cached sidecar snapshots
+
+
+def _snapshot(src: Path, tag: str):
+    """Local, mtime-cached snapshot of a sidecar sqlite that lives on the SMB share (Z:).
+
+    Copying to temp avoids SMB read-locks / partial reads while the box is still writing, but the old
+    code re-copied on EVERY call — so toggling 2D<->3D or ARTISTS re-copied the file over the network
+    each time. Here we re-copy only when the source mtime changes (the `_waveform_snapshot` pattern),
+    so repeated MAP / mix-brain interactions cost zero network I/O after the first. Returns the local
+    snapshot path, or None if the source is missing / unreadable.
+    """
+    import tempfile
+    src = Path(src)
+    try:
+        if not src.exists():
+            return None
+        mt = src.stat().st_mtime
+        tmp = Path(tempfile.gettempdir()) / f"crate_{tag}_snapshot.sqlite"
+        ent = _SNAP_CACHE.get(tag)
+        if ent is None or ent.get("mtime") != mt or not tmp.exists():
+            shutil.copy2(src, tmp)
+            _SNAP_CACHE[tag] = {"mtime": mt}
+        return tmp
+    except Exception:
+        return None
+
+
+def _tracks_by_path(con) -> dict:
+    """All tracks keyed by path in ONE query — so the *_with_coords joins don't run a SELECT per map
+    point (an N+1 that was one SMB-free but still per-row round-trip for every dot on the galaxy)."""
+    return {r["path"]: r for r in con.execute("SELECT * FROM tracks").fetchall()}
+
+
 def tracks_with_coords(db_path: Path = DB_PATH, umap_path: Path = UMAP_PATH,
                        lib_root: Path = LIB_ROOT) -> list[tuple[Track, float, float]]:
     """Join UMAP coords (from the box) with local track metadata for the MAP view.
     Returns [(Track, x, y)] with x,y in [0,1]. Empty if the map hasn't been built yet."""
-    if not Path(umap_path).exists():
+    tmp = _snapshot(umap_path, "umap")
+    if tmp is None:
         return []
-    import tempfile
-    tmp = Path(tempfile.gettempdir()) / "crate_umap_snapshot.sqlite"
     try:
-        shutil.copy2(umap_path, tmp)  # snapshot to avoid SMB read-locks
         ucon = sqlite3.connect(f"file:{tmp}?mode=ro", uri=True)
         coords = ucon.execute("SELECT relpath, x, y FROM coords").fetchall()
         ucon.close()
     except Exception:
         return []
     con = connect(db_path)
+    by_path = _tracks_by_path(con)
+    con.close()
     out: list[tuple[Track, float, float]] = []
     for rel, x, y in coords:
-        r = con.execute("SELECT * FROM tracks WHERE path=?", (str(Path(lib_root) / rel),)).fetchone()
+        r = by_path.get(str(Path(lib_root) / rel))
         if r:
             out.append((_row_to_track(r), x, y))
-    con.close()
     return out
 
 
@@ -1442,12 +1490,10 @@ def tracks_with_coords3d(db_path: Path = DB_PATH, umap_path: Path = UMAP_PATH,
     """Like tracks_with_coords but the 3D PaCMAP positions (the `coords3d` table umap_music.py writes
     alongside the 2D `coords`). Returns [(Track, x, y, z)] with x,y,z in [0,1]; empty if the 3D map
     hasn't been built (older sidecars only have 2D — the caller should fall back to tracks_with_coords)."""
-    if not Path(umap_path).exists():
+    tmp = _snapshot(umap_path, "umap3d")
+    if tmp is None:
         return []
-    import tempfile
-    tmp = Path(tempfile.gettempdir()) / "crate_umap3d_snapshot.sqlite"
     try:
-        shutil.copy2(umap_path, tmp)  # snapshot to avoid SMB read-locks
         ucon = sqlite3.connect(f"file:{tmp}?mode=ro", uri=True)
         has3d = ucon.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='coords3d'").fetchone()
@@ -1456,24 +1502,23 @@ def tracks_with_coords3d(db_path: Path = DB_PATH, umap_path: Path = UMAP_PATH,
     except Exception:
         return []
     con = connect(db_path)
+    by_path = _tracks_by_path(con)
+    con.close()
     out: list[tuple[Track, float, float, float]] = []
     for rel, x, y, z in coords:
-        r = con.execute("SELECT * FROM tracks WHERE path=?", (str(Path(lib_root) / rel),)).fetchone()
+        r = by_path.get(str(Path(lib_root) / rel))
         if r:
             out.append((_row_to_track(r), x, y, z))
-    con.close()
     return out
 
 
 def artists_with_coords(artist_umap_path: Path = ARTIST_UMAP_PATH) -> list[tuple[str, float, float, int]]:
     """[(artist, x, y, n)] from the ARTIST-level UMAP sidecar (umap_artists.py); x,y in [0,1],
     n = tracks that fed the artist vector. Empty if the artist map hasn't been built yet."""
-    if not Path(artist_umap_path).exists():
+    tmp = _snapshot(artist_umap_path, "artist_umap")
+    if tmp is None:
         return []
-    import tempfile
-    tmp = Path(tempfile.gettempdir()) / "crate_artist_umap_snapshot.sqlite"
     try:
-        shutil.copy2(artist_umap_path, tmp)
         c = sqlite3.connect(f"file:{tmp}?mode=ro", uri=True)
         rows = c.execute("SELECT artist, x, y, n FROM artists").fetchall()
         c.close()
@@ -1486,12 +1531,10 @@ def artists_with_coords3d(artist_umap_path: Path = ARTIST_UMAP_PATH) -> list[tup
     """[(artist, x, y, z, n)] from the 3D ARTIST UMAP (`artists3d` table umap_artists.py writes
     alongside the 2D `artists`). x,y,z in [0,1]. Empty if the 3D artist map hasn't been built
     (older sidecars only have 2D — the caller should fall back to the 2D artist view)."""
-    if not Path(artist_umap_path).exists():
+    tmp = _snapshot(artist_umap_path, "artist_umap3d")
+    if tmp is None:
         return []
-    import tempfile
-    tmp = Path(tempfile.gettempdir()) / "crate_artist_umap3d_snapshot.sqlite"
     try:
-        shutil.copy2(artist_umap_path, tmp)
         c = sqlite3.connect(f"file:{tmp}?mode=ro", uri=True)
         has3d = c.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='artists3d'").fetchone()

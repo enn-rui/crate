@@ -1,6 +1,6 @@
 """map_view.py — Crate's UMAP music map (plexus + force re-layout + export).
 
-Dots = tracks, positioned by CLAP-embedding UMAP, colored (outline) by Camelot key, sized by
+Dots = tracks, positioned by the sonic-embedding projection, colored (outline) by Camelot key, sized by
 rating. Pick a CONNECT relation (sonic/key/tempo/artist) to draw a plexus AND physically
 re-arrange the points (force-directed) so that relationship becomes the spatial structure.
 
@@ -159,7 +159,7 @@ class MapView(QGraphicsView):
             self.dot_items.append(it)
         self._restyle_all()
 
-        # KNN for the sonic plexus. Prefer the TRUE (mean-centered) 512-d CLAP vectors so
+        # KNN for the sonic plexus. Prefer the TRUE (mean-centered) 512-d sonic vectors so
         # "connect similar tracks" means sonically similar — not merely adjacent in the 2D
         # projection (a projection of a projection). Falls back to 2D coords for any track
         # without a loaded vector, or entirely if vectors aren't available.
@@ -754,7 +754,7 @@ def _artist_color(name: str) -> QColor:
 class ArtistMapView(QGraphicsView):
     """Artist-level UMAP scatter — a coarser 'who sits near whom' lens over the track map.
 
-    Each dot = one artist, positioned by the mean of their tracks' CLAP vectors
+    Each dot = one artist, positioned by the mean of their tracks' sonic vectors
     (`umap_artists.py` → `artist_umap.sqlite`) and SIZED by their track count. Hover = highlight
     + readout; click = filter the library list down to that artist (host switches to LIST).
     """
@@ -967,6 +967,8 @@ class MapView3D(QGraphicsView):
         self._subset = None
         self._p3 = self.base.copy()
         self._scr = np.zeros((len(self.tracks), 2))
+        self._zn = None            # cached per-dot depth (0..1) + raw z from the last projection, so
+        self._z = None             # set_playing can restyle a single dot without reprojecting all
         self._press = None
         self._moved = False
         self._jog = None
@@ -1015,6 +1017,29 @@ class MapView3D(QGraphicsView):
             return key_color(t.key)
         return _cluster_color(self.clusters.get(t.path))
 
+    def _style_dot(self, i):
+        """Apply dot i's visual state from the cached projection (self._scr/_zn/_z). Split out of
+        _update so set_playing can restyle just the two dots that changed instead of all N."""
+        it = self.dot_items[i]
+        if self._subset is not None and self.tracks[i].path not in self._subset:
+            it.setVisible(False)
+            return
+        it.setVisible(True)
+        depth = float(self._zn[i])
+        r = R * (0.55 + 0.9 * depth) + (self.tracks[i].rating or 0) * 0.5
+        it.setRect(-r, -r, 2 * r, 2 * r)
+        it.setPos(float(self._scr[i, 0]), float(self._scr[i, 1]))
+        c = self._color(self.tracks[i])
+        if self.tracks[i].path == self.playing_path:   # now playing -> bright fill + white halo
+            it.setBrush(QBrush(QColor(c.red(), c.green(), c.blue(), 255)))
+            pen = QPen(QColor(255, 255, 255, 255)); pen.setWidthF(3.0)
+            it.setPen(pen); it.setZValue(1e6)
+        else:
+            c = QColor(c); c.setAlpha(int(70 + 170 * depth))
+            it.setBrush(QColor(0, 0, 0, 0))
+            pen = QPen(c); pen.setWidthF(1.6)
+            it.setPen(pen); it.setZValue(float(self._z[i]))
+
     def _update(self):
         if not len(self._p3):
             return
@@ -1024,25 +1049,9 @@ class MapView3D(QGraphicsView):
         s = min(W, H) * 0.70 * self.zoom
         cx, cy = W / 2.0, H / 2.0
         self._scr = np.column_stack([cx + pr[:, 0] * s, cy - pr[:, 1] * s])
-        for i, it in enumerate(self.dot_items):
-            if self._subset is not None and self.tracks[i].path not in self._subset:
-                it.setVisible(False)
-                continue
-            it.setVisible(True)
-            depth = float(zn[i])
-            r = R * (0.55 + 0.9 * depth) + (self.tracks[i].rating or 0) * 0.5
-            it.setRect(-r, -r, 2 * r, 2 * r)
-            it.setPos(float(self._scr[i, 0]), float(self._scr[i, 1]))
-            c = self._color(self.tracks[i])
-            if self.tracks[i].path == self.playing_path:   # now playing -> bright fill + white halo
-                it.setBrush(QBrush(QColor(c.red(), c.green(), c.blue(), 255)))
-                pen = QPen(QColor(255, 255, 255, 255)); pen.setWidthF(3.0)
-                it.setPen(pen); it.setZValue(1e6)
-            else:
-                c = QColor(c); c.setAlpha(int(70 + 170 * depth))
-                it.setBrush(QColor(0, 0, 0, 0))
-                pen = QPen(c); pen.setWidthF(1.6)
-                it.setPen(pen); it.setZValue(float(z[i]))
+        self._zn, self._z = zn, z     # cache depth so set_playing can restyle a single dot
+        for i in range(len(self.dot_items)):
+            self._style_dot(i)
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)   # scale the scene into the viewport
         self.viewport().update()                                     # repaint the projected plexus (drawBackground)
 
@@ -1242,8 +1251,19 @@ class MapView3D(QGraphicsView):
         self._update()
 
     def set_playing(self, path):
+        """Move the now-playing highlight. The camera hasn't moved, so the projection is unchanged —
+        restyle ONLY the old + new now-playing dots (was a full O(N) reproject on every track advance,
+        which ran even while the 3D view was hidden). Visually identical to a full _update()."""
+        old = self.playing_path
         self.playing_path = path
-        self._update()
+        if self._zn is None or not len(self._scr):
+            self._update()          # nothing cached yet (never projected) -> full build
+            return
+        for p in (old, path):
+            i = self._idx_of.get(p)
+            if i is not None:
+                self._style_dot(i)
+        self.viewport().update()    # repaint (drawBackground plexus + the restyled dots)
 
     def set_trail(self, paths):
         """Listening trail as a projected comet through the played dots (oldest -> newest). `paths`

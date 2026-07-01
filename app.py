@@ -1,6 +1,6 @@
 """Crate — native PySide6 desktop app for DJ set prep.
 
-One window, two modes: a LIST (searchable table) and a MAP (CLAP-embedding UMAP), sharing one
+One window, two modes: a LIST (searchable table) and a MAP (sonic-embedding scatter), sharing one
 transport, crate panel, and history. Browse your local music library, build a crate, save it as
 a folder you can reopen, and export a rekordbox-ready .m3u8 + XML + local copies.
 All data logic lives in library.py; this file is the Qt shell, styled in the CON//FLUENT
@@ -680,6 +680,27 @@ class CrateWindow(QMainWindow):
         self.artist_view = None        # artist-level UMAP scatter (built lazily on ARTISTS toggle)
         self.artist_view_3d = None     # orbitable 3D artist galaxy (ARTISTS + 3D)
         self._async_thread: threading.Thread | None = None   # background file-op worker (plain thread)
+        # prefetch: warm the likely-next track from Z: into a local temp cache so advancing plays
+        # instantly instead of cold-streaming a FLAC over SMB. {orig_path: local_cached_path}.
+        self._prefetch: dict[str, str] = {}
+        self._prefetching: set[str] = set()
+        self._prefetch_order: list[str] = []
+        # dwell-prime: when you rest the cursor on a track (map hover / list select) we read its
+        # first ~1MB in the background and DISCARD it — no file written. That pulls the SMB open +
+        # head into the OS cache, so a later play of this non-neighbour opens warm instead of paying
+        # the cold-open penalty (measured: 1MB prime ~= a full local copy for play latency, at
+        # ~1MB vs 50-330MB). Debounced so sweeping the map doesn't prime every dot you pass over.
+        self._prime_inflight: set[str] = set()
+        self._prime_path: str | None = None
+        self._prime_timer = QTimer(self)
+        self._prime_timer.setSingleShot(True)
+        self._prime_timer.setInterval(180)
+        self._prime_timer.timeout.connect(self._do_prime)
+        try:                            # clear any stale prefetch cache from a prior session
+            import tempfile, shutil as _sh
+            _sh.rmtree(Path(tempfile.gettempdir()) / "crate_prefetch", ignore_errors=True)
+        except Exception:
+            pass
         # --- playback queue (Phase C) ---
         self.playing_track: library.Track | None = None   # the track actually loaded in the player
         self.shuffle = False                              # LIST: random next instead of sequential
@@ -918,9 +939,9 @@ class CrateWindow(QMainWindow):
         self.map_layout = QVBoxLayout(self.map_page)
         self.map_layout.setContentsMargins(0, 0, 0, 0)
         self.map_layout.setSpacing(6)
-        self.map_layout.addWidget(ascii_header("map · CLAP UMAP"))
+        self.map_layout.addWidget(ascii_header("map · sonic embedding"))
         self.map_placeholder = QLabel(
-            "MAP builds a UMAP from the analysis pipeline's CLAP embeddings.\n"
+            "MAP projects the analysis pipeline's MuQ-MuLan sonic embeddings.\n"
             "If empty, analysis hasn't run yet — run it (see SETUP.md) or hit SYNC, then try again.")
         self.map_placeholder.setObjectName("readout")
         self.map_placeholder.setAlignment(Qt.AlignCenter)
@@ -990,13 +1011,31 @@ class CrateWindow(QMainWindow):
         self.table.viewport().installEventFilter(self)
         self.transport.installEventFilter(self)
 
-        try:
-            library.sync_features()  # pick up any analysis the box has finished
-        except Exception:
-            pass
+        # async waveform loader state (see _load_waveform / _poll_waveform): the worker touches ZERO
+        # Qt and a QTimer poll delivers the result on the GUI thread — same safety model as _run_async
+        # (cross-thread signals crash this PySide6/3.14 build).
+        self._wave_seq = 0
+        self._wave_pending = None
+        self._wave_timer = QTimer(self)
+        self._wave_timer.timeout.connect(self._poll_waveform)
+
         self._refresh_saved()
         self.refresh()
+        # sync_features() copies the box's features.sqlite over SMB (Z:) — do it AFTER the window is up,
+        # off the UI thread, so launch isn't blocked on a network file copy. refresh() again when done.
+        QTimer.singleShot(0, self._sync_features_async)
         self._maybe_prompt_index()
+
+    def _sync_features_async(self):
+        self._run_async(
+            lambda progress: library.sync_features(),
+            self._on_features_synced,
+            "SYNCING ANALYSIS FROM BOX…")
+
+    def _on_features_synced(self, n):
+        if n:
+            self.refresh()
+            self.status.showMessage(f"Synced analysis into {n} tracks")
 
     # --- builders ---
     def _build_map_controls(self) -> QWidget:
@@ -1998,6 +2037,8 @@ class CrateWindow(QMainWindow):
         if select:
             self.selected_track = t
         self.inspect_label.setText(self._track_line("◇ INSPECT", t))
+        self._prime_path = t.path          # dwell-debounced SMB cache warm (see _do_prime)
+        self._prime_timer.start()
 
     def select_track(self, t):
         """Map dot clicked: inspect it AND play it (a manual pick restarts the MAP walk)."""
@@ -2012,10 +2053,12 @@ class CrateWindow(QMainWindow):
         `navigating=True` means this play came from prev/next walking the history cursor — so we
         don't re-log history, don't reset the back cursor, and don't add to the MAP walk set."""
         self.playing_track = t
+        self._prime_timer.stop()           # we're playing now; no need to prime this track's head
         if not navigating:
             self._back = 0                 # a fresh play is a new head for the history walk
             self.journey.add(t.path)
-        self.player.setSource(QUrl.fromLocalFile(t.path))
+        src = self._prefetch.get(t.path, t.path)   # play the warmed local copy if we prefetched it
+        self.player.setSource(QUrl.fromLocalFile(src))
         self.player.play()
         self.now_label.setText(self._track_line("▶ NOW", t))
         self.model.set_playing(t.path)
@@ -2032,6 +2075,96 @@ class CrateWindow(QMainWindow):
             self.map_view.set_trail(trail)
         if self.map_view_3d is not None:
             self.map_view_3d.set_trail(trail)
+        self._prefetch_next()          # warm the track we'll likely advance to
+
+    def _predict_next(self):
+        """Best-effort guess of the track play_next() will pick — for prefetch only (a wrong guess
+        just wastes one background copy). Mirrors play_next's LIST/MAP branching."""
+        walk = self._walk_view()
+        if self.stack.currentIndex() == 1 and walk is not None:
+            if self._back > 0:
+                return None            # stepping back through history, not forward
+            cur = self.playing_track
+            try:
+                return walk.nearest_unplayed(cur.path if cur else None, self.journey)
+            except Exception:
+                return None
+        tracks = self.model.tracks
+        if not tracks or self.shuffle:
+            return None                # shuffle is unpredictable — don't prefetch
+        cur = self.playing_track
+        i = next((k for k, t in enumerate(tracks) if cur and t.path == cur.path), None)
+        nxt = 0 if i is None else i + 1
+        if nxt >= len(tracks):
+            return tracks[0] if self.repeat else None
+        return tracks[nxt]
+
+    def _prefetch_next(self):
+        t = self._predict_next()
+        if t is None:
+            return
+        path = t.path
+        if path in self._prefetch or path in self._prefetching:
+            return
+        low = str(path).lower()
+        if not (low.startswith("z:") or str(path).startswith("\\\\")):
+            return                     # only worth prefetching network (SMB) files
+        self._prefetching.add(path)
+
+        def work():
+            try:
+                import os, shutil, tempfile, hashlib
+                ext = Path(path).suffix
+                key = hashlib.md5(path.encode("utf-8", "replace")).hexdigest()[:16]
+                cdir = Path(tempfile.gettempdir()) / "crate_prefetch"
+                cdir.mkdir(exist_ok=True)
+                dst = cdir / (key + ext)
+                if not dst.exists():
+                    tmp = dst.with_name(dst.name + ".part")
+                    shutil.copy2(path, tmp)
+                    os.replace(tmp, dst)
+                self._prefetch[path] = str(dst)
+                self._prefetch_order.append(path)
+                # bounded LRU: drop oldest cached copies (a file still open in the player is locked on
+                # Windows, so os.remove just fails harmlessly and it's kept)
+                while len(self._prefetch_order) > 8:
+                    old = self._prefetch_order.pop(0)
+                    op = self._prefetch.pop(old, None)
+                    if op:
+                        try:
+                            os.remove(op)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            finally:
+                self._prefetching.discard(path)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _do_prime(self):
+        """Dwell fired: warm the OS/SMB cache for the track you're resting on by reading its first
+        ~1MB (discarded — nothing written to disk). Makes a later play of this non-neighbour open
+        warm. Cheap enough to run on any dwell; only network files have a cold-open penalty worth
+        warming, and a track we already hold a full local copy of needs nothing."""
+        path = self._prime_path
+        if not path or path in self._prime_inflight or path in self._prefetch:
+            return
+        low = str(path).lower()
+        if not (low.startswith("z:") or str(path).startswith("\\\\")):
+            return
+        self._prime_inflight.add(path)
+
+        def work():
+            try:
+                with open(path, "rb") as f:
+                    f.read(1024 * 1024)     # pull head + SMB open into the OS cache, then drop it
+            except Exception:
+                pass
+            finally:
+                self._prime_inflight.discard(path)
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _scroll_to_playing(self):
         if self.playing_track is None:
@@ -2159,12 +2292,46 @@ class CrateWindow(QMainWindow):
 
     # --- waveform (async load) + cue interaction (routed from WaveformWidget) ---
     def _load_waveform(self, track):
-        """Load the track's cues + colored waveform into the strip. Reads the precomputed sidecar
-        (cached snapshot → ~ms). The soundfile fallback for un-analyzed tracks can take ~0.6s; the
-        share build's local analysis precomputes every waveform so that path is rarely hit."""
-        self.waveform.set_cues(library.get_cues(track.path))
-        dur = int((track.duration or 0) * 1000) or self.player.duration()
-        self.waveform.set_waveform(library.get_waveform(track.path), dur)
+        """Load the track's cues + colored waveform into the strip — OFF the UI thread.
+
+        Reads the precomputed sidecar (cached snapshot → ~ms) when present, but for tracks the box
+        hasn't analyzed yet get_waveform falls back to decoding the whole file over SMB (~1s). Doing
+        that inline froze the click; here the read runs on a worker and a QTimer poll paints the
+        result on the GUI thread. Rapid track switches are handled by a sequence token — only the
+        latest request's result is applied. The worker touches ZERO Qt (cross-thread signals crash
+        this PySide6/3.14 build — same reason _run_async uses a poll, not signals)."""
+        self._wave_seq += 1
+        seq = self._wave_seq
+        path = track.path
+        dur_hint = int((track.duration or 0) * 1000) or self.player.duration()
+
+        def work():
+            try:
+                cues = library.get_cues(path)
+                wf = library.get_waveform(path)
+            except Exception:
+                cues, wf = [], None
+            self._wave_pending = (seq, cues, wf, dur_hint)   # atomic attr set (GIL); read by poll
+
+        # clear the strip immediately so a stale waveform isn't shown while the new one loads
+        self.waveform.set_cues([])
+        self.waveform.set_waveform(None, dur_hint)
+        threading.Thread(target=work, daemon=True).start()
+        if not self._wave_timer.isActive():
+            self._wave_timer.start(40)
+
+    def _poll_waveform(self):
+        """GUI-thread delivery of the async waveform read (see _load_waveform)."""
+        pending = self._wave_pending
+        if pending is None:
+            return
+        seq, cues, wf, dur = pending
+        if seq != self._wave_seq:
+            return          # a newer track was requested — keep polling for the latest result
+        self._wave_pending = None
+        self._wave_timer.stop()
+        self.waveform.set_cues(cues)
+        self.waveform.set_waveform(wf, dur or self.player.duration())
 
     def _refresh_cues(self):
         if self.playing_track:

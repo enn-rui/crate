@@ -24,7 +24,7 @@ from _common import resolve_root, crate_dir  # local library ROOT + sidecar dir
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=None, help="music library root (else CRATE_LIB_ROOT / config)")
-    ap.add_argument("--neighbors", type=int, default=15)
+    ap.add_argument("--neighbors", type=int, default=48)  # wired into PaCMAP below; None auto-picks ~10,
     ap.add_argument("--min-dist", type=float, default=0.1)
     args = ap.parse_args(argv)
     root = resolve_root(args.root)
@@ -75,7 +75,11 @@ def main(argv=None):
     matf = mat.astype("float32")
 
     def _project(dim):
-        r = pacmap.PaCMAP(n_components=dim, n_neighbors=None, MN_ratio=0.5, FP_ratio=2.0,
+        # n_neighbors was previously None -> PaCMAP auto-picks ~10 for this size, which DETACHES a
+        # dense homogeneous cluster (e.g. a batch of very-similar techno) into a far exile even though
+        # its members have close neighbors in the main blob. Wire the --neighbors arg in; ~48 keeps a
+        # distinct genre a distinct-but-ADJACENT island instead of exiling it.
+        r = pacmap.PaCMAP(n_components=dim, n_neighbors=args.neighbors, MN_ratio=0.5, FP_ratio=2.0,
                           random_state=42)
         z = r.fit_transform(matf, init="pca").astype("float32")
         # Normalize into [0,1] with a SINGLE uniform scale (not per-axis), so the relative geometry

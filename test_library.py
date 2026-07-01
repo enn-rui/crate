@@ -464,9 +464,9 @@ def test_save_crate_reconciles_orphans(tmp_path):
     assert library.read_crate("Set", crates_root=crates, db_path=db)[0].path == paths[0]
 
 
-# --- CLAP similarity + mixability -------------------------------------------
+# --- Sonic similarity + mixability ------------------------------------------
 def _write_vectors(root: Path, vecs: dict[str, list[float]]) -> Path:
-    """Write a music_vectors.sqlite (embed_clap.py schema) under <root>/.crate/.
+    """Write a music_vectors.sqlite (embed_muq.py schema) under <root>/.crate/.
     `vecs` maps relpath (forward-slash, relative to root) -> raw float list."""
     import sqlite3, struct, time
     d = root / ".crate"
@@ -606,7 +606,7 @@ def test_energy_pick_arc():
 
 
 def _write_section_vectors(root: Path, secs: dict[str, tuple[list[float], list[float]]]) -> Path:
-    """Write a music_vectors.sqlite WITH vec_intro/vec_outro columns (newer embed_clap.py schema).
+    """Write a music_vectors.sqlite WITH vec_intro/vec_outro columns (newer embed_muq.py schema).
     `secs` maps relpath -> (intro_raw, outro_raw)."""
     import sqlite3, struct, time
     d = root / ".crate"; d.mkdir(parents=True, exist_ok=True)
@@ -645,7 +645,7 @@ def test_transition_score_directional_and_drives_mixability(tmp_path):
     assert s_ab > 0.99 and s_ac < 0.01                       # A's outro fits B's intro, not C's
     # directional: B's outro (+y) vs A's intro (+x) is a clash even though A->B was perfect
     assert library.transition_score(b.path, a.path, secs) < 0.01
-    # same key+bpm + no whole-track CLAP -> only the transition term separates b from c
+    # same key+bpm + no whole-track sonic vector -> only the transition term separates b from c
     for t in (a, b, c):
         t.key, t.bpm = "8A", 128.0
     m_ab = library.mixability(a, b, vectors={}, sections=secs)
@@ -653,7 +653,7 @@ def test_transition_score_directional_and_drives_mixability(tmp_path):
     assert m_ab > m_ac                                       # better mix-point flow ranks higher
 
 
-def test_load_vectors_and_clap_similarity(tmp_path):
+def test_load_vectors_and_sonic_similarity(tmp_path):
     root = _make_lib(tmp_path / "lib")
     db = tmp_path / "t.db"
     library.index(root=root, db_path=db)
@@ -670,10 +670,10 @@ def test_load_vectors_and_clap_similarity(tmp_path):
     assert len(vecs) == 3
     import numpy as np
     assert abs(float(np.linalg.norm(next(iter(vecs.values())))) - 1.0) < 1e-5  # unit-normalized
-    assert library.clap_similarity(paths[0], paths[0], vecs) == 1.0
-    assert abs(library.clap_similarity(paths[0], paths[1], vecs) - 1.0) < 1e-5
-    assert abs(library.clap_similarity(paths[0], paths[2], vecs)) < 1e-5
-    assert library.clap_similarity(paths[0], paths[3], vecs) is None  # p3 un-embedded
+    assert library.sonic_similarity(paths[0], paths[0], vecs) == 1.0
+    assert abs(library.sonic_similarity(paths[0], paths[1], vecs) - 1.0) < 1e-5
+    assert abs(library.sonic_similarity(paths[0], paths[2], vecs)) < 1e-5
+    assert library.sonic_similarity(paths[0], paths[3], vecs) is None  # p3 un-embedded
     library.clear_vector_cache()
 
 
@@ -701,7 +701,7 @@ def test_load_vectors_applies_persisted_mean_centering(tmp_path):
     # raw cosine is ~1.0 (anisotropic); after centering the two diverge sharply
     raw0 = np.array(raw[rels[paths[0]]]); raw1 = np.array(raw[rels[paths[1]]])
     raw_cos = float(raw0 @ raw1 / (np.linalg.norm(raw0) * np.linalg.norm(raw1)))
-    cen_cos = library.clap_similarity(paths[0], paths[1], vecs)
+    cen_cos = library.sonic_similarity(paths[0], paths[1], vecs)
     assert raw_cos > 0.97                            # collapsed before centering
     assert cen_cos < raw_cos - 0.5                   # centering restored real separation
     # the centered vectors equal (raw - mean) renormalized
@@ -795,7 +795,7 @@ def test_mixability_fuses_and_degrades(tmp_path):
     library.index(root=root, db_path=db)
     tracks = library.search("", db_path=db)
     a, b, c = tracks[0], tracks[1], tracks[2]
-    # same key + same bpm for all -> only the CLAP term separates them
+    # same key + same bpm for all -> only the sonic term separates them
     for t in (a, b, c):
         t.key, t.bpm = "8A", 128.0
     vecs = {a.path: __import__("numpy").array([1.0, 0.0, 0.0], dtype="float32"),
@@ -805,11 +805,11 @@ def test_mixability_fuses_and_degrades(tmp_path):
     m_ac = library.mixability(a, c, vectors=vecs)
     assert m_ab > m_ac                                # sonically-closer pair mixes better
     assert m_ab <= 1.0 and m_ac >= 0.0
-    # un-embedded track: CLAP term drops, weight redistributes over key+bpm (still a valid score)
+    # un-embedded track: sonic term drops, weight redistributes over key+bpm (still a valid score)
     d = tracks[3]
     d.key, d.bpm = "8A", 128.0
     m_ad = library.mixability(a, d, vectors=vecs)     # d has no vector
-    assert abs(m_ad - 1.0) < 1e-6                     # same key + same bpm, no clap -> perfect
+    assert abs(m_ad - 1.0) < 1e-6                     # same key + same bpm, no sonic vec -> perfect
 
 
 # --- smart crates -----------------------------------------------------------

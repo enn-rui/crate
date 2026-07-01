@@ -33,6 +33,6 @@ _*.py
 # but _common.py is a REQUIRED shared analysis module, not a scratch helper:
 !analysis/_common.py
 
-# Personal box automation (Lidarr/Soulseek inbox filer) — runs on the user's server, not part of
-# the public app. Lives on the box as ~/crate/sort_incoming.py; this copy is private-only.
+# Private server-side automation (an inbox filer for the maintainer's own setup) — not part of the
+# public app; kept out of the tracked tree.
 analysis/sort_incoming.py

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """umap_artists.py — ARTIST-level UMAP for Crate's artist map.
 
-Averages each artist's per-track CLAP vectors (from music_vectors.sqlite) into one "artist vector",
+Averages each artist's per-track sonic vectors (from music_vectors.sqlite) into one "artist vector",
 then UMAPs those artist vectors so sonically similar artists sit near each other. Writes
 artist_umap.sqlite (artist, x, y, n) — x,y in [0,1], n = how many of the artist's tracks fed in.
 

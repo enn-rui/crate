@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""vectors.py — the embedding transform shared by every consumer of the CLAP vectors.
+"""vectors.py — the embedding transform shared by every consumer of the sonic vectors.
 
-Raw CLAP audio embeddings are badly *anisotropic* (the "cone effect"): every track is ~0.99
+Raw audio embeddings can be badly *anisotropic* (the "cone effect"): every track is highly
 cosine-similar to every other, so nearest-neighbour is noise and BOTH the 512-d similarity
-(mixability/similar_tracks) AND the UMAPs degrade to mush. The fix is to **mean-center** the
-vectors (subtract the dataset-mean vector) and re-L2-normalize before any cosine/UMAP — that
-removes the common-mode component and restores genre structure (measured: off-diagonal cosine
-+0.985 -> ~0.00, dance-genre separation +0.169 vs +0.066 for PCA-drop, which over-flattens).
+(mixability/similar_tracks) AND the maps degrade to mush. The fix is to **mean-center** the
+vectors (subtract the dataset-mean vector) and re-L2-normalize before any cosine/projection — that
+removes the common-mode component and restores genre structure (measured on the original CLAP
+model: off-diagonal cosine +0.985 -> ~0.00, dance-genre separation +0.169 vs +0.066 for PCA-drop,
+which over-flattens; MuQ-MuLan is far less anisotropic but centering still helps and is kept).
 
 The dataset-mean is computed ONCE over the whole embedded library and persisted INSIDE
 music_vectors.sqlite (a `vector_stats` table), so the box (UMAP build) and the PC (similarity

@@ -9,7 +9,7 @@ builder, and better cue placement with semantics librosa can't give cheaply:
   • valence/arousal  — mood/affect (Essentia MTG-Jamendo / DEAM mood models)        [model file]
   • instrumentalness — vocal vs instrumental (Essentia voice/instrumental model)    [model file]
   • first_downbeat / downbeat_bpm / beats — phase-aligned grid (madmom RNN downbeats) [optional]
-  • structure        — coarse intro/build/drop/outro segments (novelty over CLAP-ish features)
+  • structure        — coarse intro/build/drop/outro segments (novelty over spectral features)
 
 Writes one sidecar: <root>/.crate/hi_features.sqlite (relpath PRIMARY KEY). Idempotent by
 relpath+mtime. Every feature is computed INDEPENDENTLY and failures are swallowed per-feature, so
@@ -17,7 +17,7 @@ partial deps still produce partial rows (e.g. Essentia present but madmom missin
 filled, downbeats NULL).
 
 ────────────────────────────────────────────────────────────────────────────────────────────────
-HEAVY + VERSION-FRAGILE — install in a SEPARATE venv from analyze.py/embed_clap (numpy conflict):
+HEAVY + VERSION-FRAGILE — install in a SEPARATE venv from analyze.py/embed_muq (numpy conflict):
 
   Essentia (genre/mood/danceability/instrumentalness):
     pip install essentia-tensorflow        # needs numpy<2  ->  pip install "numpy<2"

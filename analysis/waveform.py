@@ -22,7 +22,7 @@ from pathlib import Path
 
 warnings.filterwarnings("ignore")
 
-from _common import resolve_root, crate_dir, iter_audio  # local library ROOT + sidecar dir
+from _common import resolve_root, crate_dir, iter_audio, parse_buckets  # local library ROOT + sidecar dir
 
 SR = 22050          # plenty for a waveform shape; Nyquist 11 kHz covers the visible band split
 NFFT = 2048
@@ -87,14 +87,23 @@ def main(argv=None):
     ap.add_argument("--bins", type=int, default=1600)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--rebuild", action="store_true")
+    ap.add_argument("--buckets", default=None,
+                    help="comma list of top-level library folders to scan "
+                         "(default: music,music-mp3 — skips slskd/trash/backups sharing the root)")
     args = ap.parse_args(argv)
     root = resolve_root(args.root)
+    # Only walk the real library folders. iter_audio already skips .crate/, but the root can also
+    # hold download caches / quarantine / PC backups (slskd/, .crate_trash/, backups/) — without this
+    # filter waveform.py decoded ALL of them, bloating the sidecar the app copies over SMB. Matches
+    # the app's scan roots (library.py BUCKETS: music/dj, music/personal, music-mp3). Sibling steps
+    # analyze.py / embed_muq.py already take --buckets; this wires it into waveform.py too.
+    buckets = parse_buckets(args.buckets) or {"music", "music-mp3"}
 
     con = connect(crate_dir(root) / "waveforms.sqlite")
     have = {r[0]: r[1] for r in con.execute("SELECT relpath, mtime FROM waveforms")}
     done = ok = skip = err = 0
     t0 = time.time()
-    for p in iter_audio(root):
+    for p in iter_audio(root, buckets):
         rel = p.relative_to(root).as_posix()
         mt = p.stat().st_mtime
         if not args.rebuild and rel in have and abs(have[rel] - mt) < 1.0:
